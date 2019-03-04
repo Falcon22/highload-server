@@ -25,6 +25,7 @@ namespace Network {
         struct sockaddr_storage commands_addres;
         int rc = uv_ip4_addr("0.0.0.0", config->Port, (struct sockaddr_in *)&commands_addres);
         if (rc != 0) {
+            spdlog::error("Failed to call uv_ip4_addr: [{}({})]: {}\n", uv_err_name(rc), rc, uv_strerror(rc));
             throw std::runtime_error("Failed to call uv_ip4_addr");
         }
         for (const auto &worker : workers) {

@@ -86,7 +86,11 @@ protected:
     // Called by UV when connection gets closed by some reason
     void OnConnectionClose(uv_stream_t *, int);
 
+    void OnStopping(uv_handle_t *, void *);
+
     void TryCloseConnection(Connection *pconn);
+
+    void ToStopping();
 
 public:
     Worker(uint32_t id, uint32_t task_limit, uint32_t slow_req_ms_time);

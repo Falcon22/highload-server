@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <thread>
 
 namespace Server {
 
@@ -10,7 +11,7 @@ class ServerConfig {
 public:
     int Port = 8080;
 
-    size_t Workers = 2;
+    size_t Workers =  std::thread::hardware_concurrency();
 
     size_t MemoryLimit = 10 * 1024 * 1024L;
 
