@@ -16,6 +16,8 @@ class ServerConfig;
 
 namespace Network {
 
+    class Worker;
+
     class Server {
     public:
         Server();
@@ -40,15 +42,13 @@ namespace Network {
          void Stop();
 
     private:
-        /*
-         * Server configuration
-         */
+
+        // Server configuration
         std::shared_ptr<ServerConfig> config;
 
-        /*
-         *
-         */
-        std::shared_ptr<spdlog::logger> logger;
+
+        // Threads that are processing network connections
+        std::list<std::shared_ptr<Worker>> workers;
 
     };
 

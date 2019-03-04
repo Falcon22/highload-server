@@ -1,5 +1,6 @@
 set(SOURCE_FILES
         Server.cpp
+        Worker.cpp
         )
 
 add_library(Network ${SOURCE_FILES})
