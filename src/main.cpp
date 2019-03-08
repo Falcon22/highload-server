@@ -37,16 +37,13 @@ int main(int argc, char **argv) {
     uv_signal_start(&sig_stop, signal_handler_stop_app, SIGTERM);
     sig_stop.data = &app;
 
-    uv_timer_t timer;
-    uv_timer_init(&loop, &timer);
-    timer.data = &app;
-
     try {
+        spdlog::info("Start application\n");
         app.server->Start();
         uv_run(&loop, UV_RUN_DEFAULT);
         app.server->Stop();
     } catch (std::exception &e) {
-        spdlog::error(e.what());
+        spdlog::error("Fatal error: {}", e.what());
     }
     return 0;
 }

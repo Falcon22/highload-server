@@ -1,6 +1,17 @@
 #include <network/Worker.h>
 
+#include <cassert>
+#include <chrono>
+#include <arpa/inet.h>
+#include <iomanip>
+#include <memory>
+#include <csignal>
+#include <spdlog/fmt/ostr.h>
 #include <spdlog/spdlog.h>
+#include <sstream>
+#include <thread>
+#include <type_traits>
+#include <utility>
 #include <uv.h>
 
 #include <network/Connection.h>
@@ -47,7 +58,9 @@ namespace Network {
     };
 
     Worker::Worker(uint32_t id, uint32_t task_limit, uint32_t slow_req_ms_time) : id(id),
-    conn_id_seq(0), state(State::kStopped), task_limit(task_limit), slowRequestMillisecondTime(slow_req_ms_time) {}
+    conn_id_seq(0), state(State::kStopped), task_limit(task_limit), slowRequestMillisecondTime(slow_req_ms_time), is_read_suspend(false),
+    is_write_suspend(false) {
+    }
 
     Worker::~Worker() = default;
 
@@ -148,23 +161,114 @@ namespace Network {
 
     void Worker::OnStop(uv_async_t *async) {
         assert(async);
-        spdlog::info("On stop", id);
+        spdlog::info("On stop {}", id);
         if (uv_is_closing((uv_handle_t *)&uvStopAsync) == 0) {
             uv_close((uv_handle_t *)&uvStopAsync, delegate<Worker>::callback<&Worker::OnHandleClosed>);
         }
+
+        ToStopping();
     }
 
-    void Worker::OnConnectionOpen(uv_stream_t *, int) {
-        spdlog::info("Connection open in worker {}", id);
-        // TODO relese it
+    void Worker::OnAllocate(uv_handle_t *conn, size_t suggested_size, uv_buf_t *buf) {
+        assert(conn);
+        assert(buf);
+
+        Connection *pconn = (Connection *)(conn);
+        spdlog::trace("On allocate");
+
+        auto newbuf = uv_buf_init(pconn->in, 4 * 1024L);
+        buf = &newbuf;
     }
+
+    void Worker::OnRead(uv_stream_t *conn, ssize_t nread, const uv_buf_t *buf) {
+        assert(conn);
+
+        Connection *pconn = (Connection *)(conn);
+        spdlog::trace("Data avalible: {}", nread);
+
+        if (nread < 0) {
+            spdlog::debug("Closing connection on OnRead");
+            TryCloseConnection(pconn);
+            return;
+        }
+
+        spdlog::debug("On read data");
+        pconn->in += nread;
+        // TODO read while header is true and readed data >= size
+        while (state == State::kRun) {
+            // TODO read request
+
+        }
+    }
+
+    void Worker::OnConnectionOpen(uv_stream_t *server, int status) {
+        assert(server);
+        if (state == State::kStopping) {
+            spdlog::debug("New connection block, state stoppong: {}", conn_id_seq + 1);
+            return;
+        }
+        if (status != 0) {
+            spdlog::debug("Failed to open connection: {} because {]", conn_id_seq + 1, uv_strerror(status));
+            return;
+        }
+
+        auto pconn = new Connection();
+        spdlog::info("New connection: {}", conn_id_seq + 1);
+        pconn->id = ++conn_id_seq;
+        pconn->_state = details::State::Open;
+        pconn->handler.data = this;
+        pconn->write_async.data = this;
+        pconn->is_open = true;
+
+        // Init connection
+        int rc = uv_tcp_init(&uvLoop, (uv_tcp_t *)pconn);
+        assert(rc == 0);
+
+        // Increment open handlers counter
+        openHandlersCount++;
+
+        // Setup client socket
+        rc = uv_accept(server, (uv_stream_t *)pconn);
+        if (rc != 0) {
+            spdlog::error("Failed to call uv_accept: [{}({})]: {}", uv_err_name(rc), rc,
+                          uv_strerror(rc));
+            return;
+        }
+
+        if (!is_write_suspend || !is_read_suspend) {
+            rc = uv_read_start((uv_stream_t *)pconn, delegate<Worker, size_t, uv_buf_t *>::callback<&Worker::OnAllocate>,
+                    delegate<Worker, size_t, const uv_buf_t *>::callback<&Worker::OnRead>);
+            if (rc != 0) {
+                spdlog::critical("Failed to call uv_read_start: [{}({})]: {}", uv_err_name(rc), rc,
+                                 uv_strerror(rc));
+                uv_close((uv_handle_t *)(pconn), delegate<Worker>::callback<&Worker::OnConnectionClose>);
+            }
+        }
+        spdlog::debug("Connection suspend on accept");
+    }
+
+    void Worker::OnConnectionClose(uv_stream_t *, int) {}
 
     void Worker::OnHandleClosed(uv_handle_t *) {
-        // TODO release it
+        spdlog::info("Handler closed");
+        openHandlersCount--;
+        StoppedIfRequestedAndPossible();
     }
 
     void Worker::TryCloseConnection(Server::Network::Connection *pconn) {
-        // TODO release it
+        assert(pconn);
+        spdlog::info("Try to close connection: state={}", pconn->_state);
+            if (pconn->_state == details::State::Open) {
+                // Connection has no watcher, so jump to WatcherClosed state
+                pconn->_state = details::State::WatcherClosed;
+            }
+
+            if (pconn->_state == details::State::SocketClosed) {
+                spdlog::debug("Deallocate connection: state={}", pconn->_state);
+                pconn->~Connection();
+
+                StoppedIfRequestedAndPossible();
+            }
     }
 
     void Worker::OnStopping(uv_handle_t *handle, void *args) {
@@ -188,6 +292,20 @@ namespace Network {
         }
 
         uv_walk(&uvLoop, delegate<Worker, void *>::callback<&Worker::OnStopping>, nullptr);
+    }
+
+    void Worker::StoppedIfRequestedAndPossible() {
+        if (state == State::kStopped && openHandlersCount == 1) {
+            uv_signal_stop(&uvSigPipe);
+            openHandlersCount--;
+        } else if (state == State::kStopped && openHandlersCount == 0) {
+            int rc = uv_loop_close(&uvLoop);
+            if (rc != 0) {
+                spdlog::critical("Failed to call uv_loop_close: [{}({})]: {}\n",  uv_err_name(rc), rc,
+                                 uv_strerror(rc));
+            }
+            state = State::kStopped;
+        }
     }
 
 } // Server

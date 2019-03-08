@@ -3,10 +3,10 @@
 
 #include <uv.h>
 
+#include "Connection.h"
+
 namespace Server {
 namespace Network {
-
-struct Connection;
 
 class Worker {
 private:
@@ -17,6 +17,11 @@ private:
         kStopping, // ctrl-c
         kStopped // done
     };
+
+    bool is_write_suspend;
+    bool is_read_suspend;
+
+    // TODO add suspend commands
 
     /*
      * Work passed to the worker thread pool and back in order to execute
@@ -86,11 +91,18 @@ protected:
     // Called by UV when connection gets closed by some reason
     void OnConnectionClose(uv_stream_t *, int);
 
+    // LibUV used that method just before call OnRead to allocate temporary buffer for the input
+    void OnAllocate(uv_handle_t *, size_t suggested_size, uv_buf_t *buf);
+
+    // Connection is ready to read data
+    void OnRead(uv_stream_t *, ssize_t nread, const uv_buf_t *buf);
+
     void OnStopping(uv_handle_t *, void *);
 
     void TryCloseConnection(Connection *pconn);
 
     void ToStopping();
+    void StoppedIfRequestedAndPossible();
 
 public:
     Worker(uint32_t id, uint32_t task_limit, uint32_t slow_req_ms_time);

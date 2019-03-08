@@ -4,10 +4,14 @@
 namespace Server {
 namespace Network {
 
+namespace details {
+enum State { Open, WatcherClosing, WatcherClosed, SocketClosing, SocketClosed };
+};
+
 /*
  * Structure carries state of a single connection
  */
-struct Conncetion {
+struct Connection {
     // Extends UV stream to pass connection around through libuv
     // internal structures
     uv_stream_t handler;
@@ -16,8 +20,17 @@ struct Conncetion {
     // in the connection
     uv_async_t write_async;
 
+    // Connection state
+    details::State _state;
+
     // Connection unique number
     uint32_t id;
+
+    // Input buffer
+    char* in;
+
+    // True if header was parsed from the input buffer
+    bool header;
 
     bool is_open;
 };
