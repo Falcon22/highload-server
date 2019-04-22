@@ -89,13 +89,23 @@ protected:
     void OnConnectionOpen(uv_stream_t *, int);
 
     // Called by UV when connection gets closed by some reason
-    void OnConnectionClose(uv_stream_t *, int);
+    void OnConnectionClose(uv_handle_t *);
 
     // LibUV used that method just before call OnRead to allocate temporary buffer for the input
     void OnAllocate(uv_handle_t *, size_t suggested_size, uv_buf_t *buf);
 
     // Connection is ready to read data
     void OnRead(uv_stream_t *, ssize_t nread, const uv_buf_t *buf);
+
+    // Connection notified by some other thread that some data to be send appears in the queue,
+    // it should wakeup, enable write side of connection and start serialize output queue
+    void OnWriteAsync(uv_async_t *handle);
+
+    // Called once libuv release all internal resources associated with pconn->write_async handler and memory
+    // allocated for the task could be reclaimed
+    void OnWriteAsyncClosed(uv_handle_t *handle);
+
+    void ParseAndExecute(Connection *pconn);
 
     void OnStopping(uv_handle_t *, void *);
 
