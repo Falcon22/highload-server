@@ -1,8 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(server LANGUAGES C CXX)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
-
+set(CMAKE_CXX_STANDARD 17)
 set(BOOST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/boost_1_69_0")
 
 # If system has ccache - use it

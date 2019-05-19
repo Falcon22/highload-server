@@ -13,13 +13,15 @@ RUN apt-get -y upgrade
 
 ENV PROJECT_NAME server
 
-WORKDIR /opt/$PROJECT_NAME
-ADD . /opt/$PROJECT_NAME/
+ADD ./http-test-suite/ .
+
+WORKDIR /opt/server
+ADD . /opt/server/
 
 RUN mkdir build &&\
     cd build &&\
-    cmake -DCMAKE_BUILD_TYPE=Release .. &&\
+    cmake -DCMAKE_BUILD_TYPE=Debug .. &&\
     make
 
 EXPOSE 8080
-CMD ["server"]
+CMD ["/opt/server/build/src/server"]

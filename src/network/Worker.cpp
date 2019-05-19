@@ -17,11 +17,76 @@
 #include <uv.h>
 
 #include <network/Connection.h>
+#include <network/http/HTTPRequest.h>
+#include <network/http/HTTPContext.h>
 
 #include "utils/membuf.h"
 
 namespace Server {
 namespace Network {
+    void handleStaticRedirect(Http::HTTPContext &ctx, const std::string &decodedURL) {
+        ctx.response.headers["Location"] = Http::utility::URLEncode(decodedURL + '/');
+        ctx.response.setStatusCode(Http::StatusCode::MovedPermanently);
+    }
+
+    void handleStaticExists(Http::HTTPContext &ctx, const Http::fs::path &p) {
+        auto sizeLeft = Http::fs::file_size(p);
+        ctx.response.headers["Content-Length"] = fmt::format("{}", sizeLeft);
+        ctx.response.setContentTypeByExtension(p.extension());
+        ctx.response.setStatusCode(Http::StatusCode::OK);
+
+        if (ctx.request.requestLine.method != "HEAD")
+            ctx.attachFile(p);
+    }
+
+    void handleStatic(Http::HTTPContext &ctx) {
+        const std::string rootDir = "/opt/server/http-test-suite";
+
+        if (ctx.request.requestLine.method != "GET" && ctx.request.requestLine.method != "HEAD") {
+            ctx.response.setStatusCode(Http::StatusCode::MethodNotAllowed);
+            return;
+        }
+
+        if (ctx.request.requestLine.request_uri.find("/..") != std::string::npos) {
+            ctx.response.setStatusCode(Http::StatusCode::BadRequest);
+            return;
+        }
+
+        std::string decodedURL;
+        auto pos = ctx.request.requestLine.request_uri.find('?');
+        if (pos == std::string::npos) {
+            decodedURL = Http::utility::URLDecode(ctx.request.requestLine.request_uri);
+        } else {
+            decodedURL = Http::utility::URLDecode(ctx.request.requestLine.request_uri.substr(0, pos));
+        }
+
+        Http::fs::path p;
+        bool subdir = false;
+        if (decodedURL[decodedURL.length() - 1] != '/') {
+            if (Http::fs::is_directory(rootDir + decodedURL)) {
+                handleStaticRedirect(ctx, decodedURL);
+                return;
+            }
+
+            // no subdir
+            p = rootDir + decodedURL;
+        } else {
+            // subdir
+            subdir = true;
+            p = rootDir + decodedURL + "index.html";
+        }
+
+        if (Http::fs::exists(p)) {
+            handleStaticExists(ctx, p);
+        } else if (subdir) {
+            ctx.response.setStatusCode(Http::StatusCode::Forbidden);
+        } else {
+            ctx.response.setStatusCode(Http::StatusCode::NotFound);
+        }
+    }
+
+
+
 
     // Translate c stype callback into class
     template <typename T, typename... Types> struct delegate {
@@ -203,6 +268,8 @@ namespace Network {
         assert(conn);
         spdlog::info("OnRead");
 
+        uv_stream_set_blocking(conn, 1);
+
         Connection *pconn = (Connection *)(conn);
         spdlog::info("Data avalible: {}", nread);
 
@@ -211,6 +278,39 @@ namespace Network {
             TryCloseConnection(pconn);
             return;
         }
+
+
+
+        std::string rawHeader(buf->base, nread);
+
+
+        Http::HTTPContext ctx(conn);
+        ctx.request.parseRawHeader(rawHeader);
+        ctx.response.statusLine.http_version = ctx.request.requestLine.http_version;
+
+        handleStatic(ctx);
+
+        ctx.writeHeader();
+        ctx.writeFile();
+
+
+        TryCloseConnection(pconn);
+/*
+        uv_write_t req;
+        auto hui = ctx.response.getHeader();
+
+        uv_buf_t outbuf {
+                .base = const_cast<char *>(hui.c_str()),
+                .len = static_cast<size_t>(hui.size())
+        };
+
+        int err = uv_write(&req, conn, &outbuf, 1, NULL);
+        if (err < 0) {
+            spdlog::error("OnRead: {}", uv_strerror(err));
+        }
+
+*/
+
 
         free(buf->base);
     }
@@ -285,10 +385,10 @@ namespace Network {
         spdlog::debug("Try to close connection: state={}", pconn->_state);
 
         // Deffer close callback from multiple calls as we dfinetely don't want to delete memory twice!
-        assert(!uv_is_closing((uv_handle_t *)&pconn->write_async));
-        uv_close((uv_handle_t *)&pconn->write_async,
-                 delegate<Worker>::callback<&Worker::OnWriteAsyncClosed>);
+        assert(!uv_is_closing((uv_handle_t *)&pconn->handler));
         pconn->_state = details::State::WatcherClosing;
+        uv_close((uv_handle_t *)&pconn->handler,
+                 delegate<Worker>::callback<&Worker::OnWriteAsyncClosed>);
     }
 
     void Worker::OnStopping(uv_handle_t *handle, void *args) {
@@ -333,12 +433,7 @@ namespace Network {
 
         Connection *pconn = reinterpret_cast<Connection *>((char *)handle - offsetof(Connection, write_async));
         assert((uv_handle_t *)&pconn->write_async == handle);
-        assert(pconn->_state == details::State::WatcherClosing);
         spdlog::info("Closing connection watcher");
-
-        // openHandlersCount--;
-        pconn->_state = details::State::WatcherClosed;
-        TryCloseConnection(pconn);
     }
 
     void Worker::ParseAndExecute(Server::Network::Connection *pconn) {

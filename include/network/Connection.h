@@ -1,6 +1,8 @@
 #ifndef SERVER_CONNECTION_H
 #define SERVER_CONNECTION_H
 
+#include "uv.h"
+
 namespace Server {
 namespace Network {
 

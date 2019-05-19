@@ -28,6 +28,7 @@ void signal_handler_stop_app(uv_signal_t *handle, int signum) {
 int main(int argc, char **argv) {
     Application app;
     spdlog::info("Starting application");
+    spdlog::set_level(spdlog::level::debug);
     app.server = std::make_shared<Network::Server>();
     uv_loop_t loop;
     uv_loop_init(&loop);

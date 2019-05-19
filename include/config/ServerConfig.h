@@ -9,7 +9,7 @@ namespace Server {
 
 class ServerConfig {
 public:
-    int Port = 8080;
+    int Port = 80;
 
     size_t Workers =  std::thread::hardware_concurrency();
 
